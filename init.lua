@@ -3,8 +3,8 @@ local layerActive = false
 
 local layout = {
     [49] = {"\u{00A0}", ""}, -- Space
-    [50] = {"`", "~"},
-    [10] = {"`", "~"},
+    [50] = {"`", "~"}, -- `/ё
+    [10] = {"`", "~"}, -- `/ё
 
     [18] = {"¹", "¡"},
     [19] = {"²", "½"},
@@ -55,53 +55,81 @@ local layout = {
     [44] = {"…", "́"},
 }
 
+local restoreTimer = nil
+
 local function sendText(text)
     if text == nil or text == "" then
         return
     end
 
     local oldClipboard = hs.pasteboard.getContents()
+
     hs.pasteboard.setContents(text)
     hs.eventtap.event.newKeyEvent({"cmd"}, 9, true):post()
     hs.eventtap.event.newKeyEvent({"cmd"}, 9, false):post()
 
-    hs.timer.doAfter(0.05, function()
+    if restoreTimer ~= nil then
+        restoreTimer:stop()
+        restoreTimer = nil
+    end
+
+    restoreTimer = hs.timer.doAfter(0.15, function()
         hs.pasteboard.setContents(oldClipboard)
+        restoreTimer = nil
     end)
+
 end
 
 local watcher = hs.eventtap.new({
     hs.eventtap.event.types.keyDown,
-    hs.eventtap.event.types.keyUp
+    hs.eventtap.event.types.keyUp,
+    hs.eventtap.event.types.flagsChanged
 }, function(event)
-    local keyCode = event:getKeyCode()
-    local eventType = event:getType()
+    local ok, result = pcall(function()
+        local keyCode = event:getKeyCode()
+        local eventType = event:getType()
 
-    if keyCode == F18 then
-        layerActive = eventType == hs.eventtap.event.types.keyDown
+        if keyCode == F18 then
+            layerActive = eventType ~= hs.eventtap.event.types.keyUp
+            return true
+        end
+
+        if not layerActive then
+            return false
+        end
+
+        if eventType ~= hs.eventtap.event.types.keyDown then
+            return false
+        end
+
+        local pair = layout[keyCode]
+        if pair == nil then
+            return false
+        end
+
+        local flags = event:getFlags()
+        local text = flags.shift and pair[2] or pair[1]
+
+        sendText(text)
         return true
-    end
+    end)
 
-    if not layerActive then
+    if not ok then
+        print("Keyboard layer error:", result)
+        layerActive = false
         return false
     end
 
-    if eventType ~= hs.eventtap.event.types.keyDown then
-        return false
-    end
-
-    local pair = layout[keyCode]
-    if pair == nil then
-        return false
-    end
-
-    local flags = event:getFlags()
-    local text = flags.shift and pair[2] or pair[1]
-
-    sendText(text)
-    return true
+    return result
 end)
 
 watcher:start()
+
+hs.timer.doEvery(10, function()
+    if watcher ~= nil and not watcher:isEnabled() then
+        print("Keyboard watcher was disabled; restarting")
+        watcher:start()
+    end
+end)
 
 hs.alert.show("Custom keyboard layer loaded")
